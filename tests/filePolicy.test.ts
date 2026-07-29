@@ -103,6 +103,17 @@ test('requires at least ten percent savings except compatibility conversion', ()
   );
 });
 
+test('keeps a prepared image that crosses under the Healz upload limit', () => {
+  assert.equal(
+    shouldUsePreparedFile({
+      originalBytes: 21 * 1024 * 1024,
+      preparedBytes: 20 * 1024 * 1024,
+      compatibilityConversion: false,
+    }),
+    true,
+  );
+});
+
 test('enforces queue count and batch byte limits at the boundary', () => {
   assert.equal(canAppendToQueue({ currentCount: 0, currentBytes: 0, nextBytes: 50 * 1024 * 1024 }), true);
   assert.equal(canAppendToQueue({ currentCount: 0, currentBytes: 0, nextBytes: 50 * 1024 * 1024 + 1 }), false);

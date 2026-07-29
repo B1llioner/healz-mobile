@@ -46,7 +46,7 @@ const ISSUE_TEXT: Record<ImportIssue['code'], string> = {
   too_many_files: 'За один раз можно подготовить не больше 10 файлов.',
   unsupported_uri: 'Одно из приложений не предоставило доступ к файлу.',
   unsupported_type: 'Поддерживаются PDF, JPEG, PNG, WebP и HEIC.',
-  file_too_large: 'Файл больше безопасного лимита 50 МБ.',
+  file_too_large: 'Файл больше 50 МБ — локальная подготовка такого файла не поддерживается.',
   batch_too_large: 'Пакет файлов больше лимита 100 МБ.',
   cache_unavailable: 'Не удалось создать защищённую временную копию.',
   read_failed: 'Не удалось прочитать один из выбранных файлов.',

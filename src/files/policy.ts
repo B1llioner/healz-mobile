@@ -1,9 +1,10 @@
 import {
   MAX_BATCH_BYTES,
-  MAX_FILE_BYTES,
+  MAX_IMPORT_FILE_BYTES,
   MAX_FILES,
   MAX_IMAGE_EDGE,
   MIN_SAVINGS_RATIO,
+  MAX_UPLOAD_FILE_BYTES,
 } from '../config';
 
 export type ImageMimeType = 'image/jpeg' | 'image/png' | 'image/webp' | 'image/heic';
@@ -76,6 +77,10 @@ export function shouldUsePreparedFile(input: {
 }): boolean {
   if (input.compatibilityConversion) return true;
   if (input.originalBytes <= 0 || input.preparedBytes <= 0) return false;
+  if (
+    input.originalBytes > MAX_UPLOAD_FILE_BYTES
+    && input.preparedBytes <= MAX_UPLOAD_FILE_BYTES
+  ) return true;
   return input.preparedBytes <= input.originalBytes * (1 - MIN_SAVINGS_RATIO);
 }
 
@@ -84,6 +89,6 @@ export function canAppendToQueue(input: {
   currentBytes: number;
   nextBytes: number;
 }): boolean {
-  if (input.nextBytes < 0 || input.nextBytes > MAX_FILE_BYTES) return false;
+  if (input.nextBytes < 0 || input.nextBytes > MAX_IMPORT_FILE_BYTES) return false;
   return input.currentCount < MAX_FILES && input.currentBytes + input.nextBytes <= MAX_BATCH_BYTES;
 }

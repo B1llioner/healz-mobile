@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java
-index 07f73fd..228264f 100644
+index 07f73fd..f7337f0 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java
 +++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java
 @@ -3,7 +3,9 @@ package com.reactnativecommunity.webview;
@@ -12,17 +12,15 @@ index 07f73fd..228264f 100644
  import android.net.Uri;
  import android.os.Build;
  import android.os.Message;
-@@ -36,6 +38,9 @@ import java.util.ArrayList;
+@@ -35,3 +37,7 @@ import com.reactnativecommunity.webview.events.TopOpenWindowEvent;
+ import java.util.ArrayList;
  import java.util.Collections;
  import java.util.List;
- 
++import java.util.Locale;
++
 +import org.json.JSONArray;
 +import org.json.JSONObject;
-+
- public class RNCWebChromeClient extends WebChromeClient implements LifecycleEventListener {
-     protected static final FrameLayout.LayoutParams FULLSCREEN_LAYOUT_PARAMS = new FrameLayout.LayoutParams(
-             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER);
-@@ -50,6 +55,12 @@ public class RNCWebChromeClient extends WebChromeClient implements LifecycleEven
+@@ -50,6 +56,12 @@ public class RNCWebChromeClient extends WebChromeClient implements LifecycleEven
  
      protected static final int COMMON_PERMISSION_REQUEST = 3;
  
@@ -35,7 +33,7 @@ index 07f73fd..228264f 100644
      protected RNCWebView mWebView;
  
      protected View mVideoView;
-@@ -333,9 +344,118 @@ public class RNCWebChromeClient extends WebChromeClient implements LifecycleEven
+@@ -333,9 +345,127 @@ public class RNCWebChromeClient extends WebChromeClient implements LifecycleEven
          String[] acceptTypes = fileChooserParams.getAcceptTypes();
          boolean allowMultiple = fileChooserParams.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE;
  
@@ -67,8 +65,17 @@ index 07f73fd..228264f 100644
 +        String pagePath = pageUri.getPath();
 +        if (!"https".equals(pageUri.getScheme())
 +                || !"app.healz.ai".equals(pageUri.getHost())
++                || (pageUri.getPort() != -1 && pageUri.getPort() != 443)
 +                || pagePath == null
 +                || !("/app/chat".equals(pagePath) || pagePath.startsWith("/app/chat/"))) {
++            return null;
++        }
++
++        // The live Healz composer renders application/pdf,image/*, then changes
++        // the same multiple file input to */* immediately before click(). Keep
++        // this identity check deliberately narrow so another chooser on the chat
++        // page cannot accidentally receive staged medical documents.
++        if (captureEnabled || !isTrustedHealzDocumentChooser(acceptTypes, allowMultiple)) {
 +            return null;
 +        }
 +
@@ -92,16 +99,12 @@ index 07f73fd..228264f 100644
 +            if (nonce.isEmpty() || files == null || files.length() == 0) {
 +                return null;
 +            }
-+            if (files.length() > 1 && !allowMultiple) {
-+                return null;
-+            }
-+
 +            List<Uri> uris = new ArrayList<>();
 +            String expectedAuthority = context.getPackageName() + ".HealzUploadFileProvider";
 +            for (int index = 0; index < files.length(); index += 1) {
 +                JSONObject file = files.getJSONObject(index);
 +                String mimeType = file.optString("mimeType", "");
-+                if (!isAcceptedHealzMime(mimeType, acceptTypes)) {
++                if (!isSupportedHealzMime(mimeType)) {
 +                    return null;
 +                }
 +
@@ -123,32 +126,36 @@ index 07f73fd..228264f 100644
 +        }
 +    }
 +
-+    private boolean isAcceptedHealzMime(String mimeType, String[] acceptTypes) {
-+        if (!("application/pdf".equals(mimeType) || mimeType.startsWith("image/"))) {
-+            return false;
-+        }
-+        if (acceptTypes == null || acceptTypes.length == 0) {
++    private boolean isTrustedHealzDocumentChooser(String[] acceptTypes, boolean allowMultiple) {
++        if (!allowMultiple || acceptTypes == null || acceptTypes.length == 0) {
 +            return false;
 +        }
 +
-+        boolean acceptsPdf = false;
-+        boolean acceptsImages = false;
-+        boolean acceptsMime = false;
++        List<String> values = new ArrayList<>();
 +        for (String rawAcceptType : acceptTypes) {
-+            if (rawAcceptType == null) continue;
-+            String[] values = rawAcceptType.toLowerCase().split(",");
-+            for (String rawValue : values) {
++            if (rawAcceptType == null) return false;
++            String[] splitValues = rawAcceptType.toLowerCase(Locale.ROOT).split(",", -1);
++            for (String rawValue : splitValues) {
 +                String value = rawValue.trim();
-+                if ("application/pdf".equals(value)) acceptsPdf = true;
-+                if ("image/*".equals(value)) acceptsImages = true;
-+                if ("*/*".equals(value)
-+                        || value.equals(mimeType)
-+                        || (value.endsWith("/*") && mimeType.startsWith(value.substring(0, value.length() - 1)))) {
-+                    acceptsMime = true;
-+                }
++                if (value.isEmpty()) return false;
++                values.add(value);
 +            }
 +        }
-+        return acceptsPdf && acceptsImages && acceptsMime;
++
++        if (values.size() == 1) {
++            return "*/*".equals(values.get(0));
++        }
++        return values.size() == 2
++                && values.contains("application/pdf")
++                && values.contains("image/*");
++    }
++
++    private boolean isSupportedHealzMime(String mimeType) {
++        return "application/pdf".equals(mimeType)
++                || "image/jpeg".equals(mimeType)
++                || "image/png".equals(mimeType)
++                || "image/webp".equals(mimeType)
++                || "image/heic".equals(mimeType);
 +    }
 +
      @Override

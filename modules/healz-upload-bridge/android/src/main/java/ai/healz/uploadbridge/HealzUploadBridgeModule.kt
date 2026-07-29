@@ -18,7 +18,8 @@ import java.io.FileOutputStream
 import java.util.UUID
 
 private const val MAX_FILES = 10
-private const val MAX_FILE_BYTES = 50L * 1024L * 1024L
+private const val MAX_IMPORT_FILE_BYTES = 50L * 1024L * 1024L
+private const val MAX_UPLOAD_FILE_BYTES = 20L * 1024L * 1024L
 private const val MAX_BATCH_BYTES = 100L * 1024L * 1024L
 private const val COPY_BUFFER_BYTES = 64 * 1024
 private const val CACHE_TTL_MS = 24L * 60L * 60L * 1000L
@@ -149,7 +150,7 @@ class HealzUploadBridgeModule : Module() {
 
       val metadata = queryMetadata(sourceUri)
       val displayName = metadata.name?.let(::sanitizeName)
-      if (metadata.size != null && metadata.size > MAX_FILE_BYTES) {
+      if (metadata.size != null && metadata.size > MAX_IMPORT_FILE_BYTES) {
         issues += ImportIssue("file_too_large", displayName)
         return@forEachIndexed
       }
@@ -204,7 +205,7 @@ class HealzUploadBridgeModule : Module() {
       if (!source.isFile || !source.canRead()) {
         throw IllegalArgumentException("Prepared file is not readable")
       }
-      if (source.length() > MAX_FILE_BYTES) {
+      if (source.length() > MAX_UPLOAD_FILE_BYTES) {
         throw IllegalArgumentException("Prepared file exceeds the size limit")
       }
 
@@ -253,7 +254,7 @@ class HealzUploadBridgeModule : Module() {
         }
         require(file.isFile && file.canRead()) { "Staged file is not readable" }
         val actualSize = file.length()
-        require(actualSize <= MAX_FILE_BYTES) { "Staged file exceeds the size limit" }
+        require(actualSize <= MAX_UPLOAD_FILE_BYTES) { "Staged file exceeds the size limit" }
         batchBytes += actualSize
         require(batchBytes <= MAX_BATCH_BYTES) { "Staged batch exceeds the size limit" }
         val detectedMime = detectMime(file) ?: throw IllegalArgumentException("Unsupported staged file")
@@ -421,7 +422,7 @@ class HealzUploadBridgeModule : Module() {
           val read = source.read(buffer)
           if (read < 0) break
           copied += read
-          if (copied > MAX_FILE_BYTES) throw ImportRejected("file_too_large")
+          if (copied > MAX_IMPORT_FILE_BYTES) throw ImportRejected("file_too_large")
           if (existingBatchBytes + copied > MAX_BATCH_BYTES) throw ImportRejected("batch_too_large")
           output.write(buffer, 0, read)
         }

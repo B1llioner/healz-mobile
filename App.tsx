@@ -2,15 +2,20 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
+  Keyboard,
   Linking,
-  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import {
+  initialWindowMetrics,
+  SafeAreaProvider,
+  SafeAreaView,
+} from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 
 import HealzUploadBridge, {
@@ -18,16 +23,27 @@ import HealzUploadBridge, {
 } from './modules/healz-upload-bridge';
 import { PendingUploadBanner } from './src/components/PendingUploadBanner';
 import { UploadReviewModal } from './src/components/UploadReviewModal';
-import { COLORS, HEALZ_START_URL } from './src/config';
-import { describeIssue, toStageInput, type QueuedFile } from './src/files/model';
+import { COLORS, HEALZ_START_URL, MAX_UPLOAD_FILE_BYTES } from './src/config';
+import {
+  describeIssue,
+  selectedFile,
+  toStageInput,
+  type QueuedFile,
+} from './src/files/model';
 import { canAppendToQueue } from './src/files/policy';
 import { prepareImportedFile } from './src/files/prepareFile';
 import { useIncomingShares } from './src/share/useIncomingShares';
+import { useResponsiveLayout } from './src/ui/useResponsiveLayout';
 import { classifyNavigation } from './src/web/urlPolicy';
 
-type ActiveStage = { nonce: string; count: number };
+type ActiveStage = {
+  nonce: string;
+  count: number;
+  status: 'staged' | 'handedOff';
+};
 
 function HealzApp() {
+  const layout = useResponsiveLayout();
   const webViewRef = useRef<WebView>(null);
   const canGoBackRef = useRef(false);
   const queueRef = useRef<QueuedFile[]>([]);
@@ -81,9 +97,19 @@ function HealzApp() {
   }, [updateQueue]);
 
   const handleImportedBatch = useCallback((result: ImportBatchResult) => {
-    if (stageRef.current) {
+    const previousStage = stageRef.current;
+    if (previousStage) {
       void HealzUploadBridge.clearStage();
       updateStage(null);
+    }
+
+    // Once a batch has been handed to the website, a later Android share must
+    // start a fresh logical queue. The old private files stay alive until TTL
+    // cleanup because the website may still be streaming their content URIs.
+    if (previousStage?.status === 'handedOff') {
+      queueRef.current = [];
+      setQueue([]);
+      setIssues([]);
     }
 
     const existing = queueRef.current;
@@ -140,18 +166,38 @@ function HealzApp() {
   }, []);
 
   useEffect(() => {
-    if (!stage) return;
-    const interval = setInterval(() => {
+    if (!stage || stage.status !== 'staged') return;
+    let cancelled = false;
+    const poll = () => {
       void HealzUploadBridge.getStageStatus(stage.nonce).then((status) => {
+        const current = stageRef.current;
+        if (
+          cancelled
+          || current?.nonce !== stage.nonce
+          || current.status !== 'staged'
+        ) return;
+        if (status.state === 'none') {
+          // Native TTL cleanup also removes the private files. Do not leave a
+          // misleading "ready" banner pointing at a stage that cannot exist.
+          queueRef.current = [];
+          setQueue([]);
+          setIssues([]);
+          setReviewVisible(false);
+          updateStage(null);
+          setNotice('Подготовленные файлы устарели. Поделитесь ими с Healz ещё раз.');
+          return;
+        }
         if (status.state !== 'consumed') return;
-        updateStage(null);
-        queueRef.current = [];
-        setQueue([]);
-        setIssues([]);
-        setNotice('Файлы переданы в Healz. Проверьте карточки в сообщении перед отправкой.');
-      });
-    }, 700);
-    return () => clearInterval(interval);
+        updateStage({ ...stage, status: 'handedOff' });
+        setNotice('Файлы переданы скрепке Healz. Проверьте карточки перед отправкой сообщения.');
+      }).catch(() => undefined);
+    };
+    poll();
+    const interval = setInterval(poll, 700);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [stage, updateStage]);
 
   useEffect(() => {
@@ -159,6 +205,14 @@ function HealzApp() {
     const timeout = setTimeout(() => setNotice(null), 6000);
     return () => clearTimeout(timeout);
   }, [notice]);
+
+  useEffect(() => {
+    if (!reviewVisible) return;
+    Keyboard.dismiss();
+    webViewRef.current?.injectJavaScript(
+      'if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); true;',
+    );
+  }, [reviewVisible]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -190,15 +244,34 @@ function HealzApp() {
     void HealzUploadBridge.discardFiles(ids);
   }, [updateStage]);
 
+  const dismissHandedOffQueue = useCallback(() => {
+    // The website may still be streaming the content URI after the chooser
+    // callback. Hide the local queue, but let TTL cleanup remove physical files
+    // later instead of invalidating an in-flight upload.
+    queueRef.current = [];
+    setQueue([]);
+    setIssues([]);
+    setReviewVisible(false);
+    updateStage(null);
+  }, [updateStage]);
+
   const stageFiles = useCallback(async () => {
     if (queueRef.current.length === 0) return;
     if (queueRef.current.some((item) => item.state === 'preparing')) return;
+    if (queueRef.current.some((item) => selectedFile(item).size > MAX_UPLOAD_FILE_BYTES)) {
+      setIssues((current) => [
+        ...current.filter((issue) => !issue.startsWith('Перед загрузкой каждый файл')),
+        'Перед загрузкой каждый файл должен быть не больше 20 МБ. Выберите оптимизированную версию или уберите файл.',
+      ]);
+      setReviewVisible(true);
+      return;
+    }
     setStaging(true);
     try {
       const result = await HealzUploadBridge.stageForWebView(
         queueRef.current.map(toStageInput),
       );
-      updateStage(result);
+      updateStage({ ...result, status: 'staged' });
       setReviewVisible(false);
       setIssues([]);
     } catch {
@@ -224,15 +297,15 @@ function HealzApp() {
   }, []);
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'right', 'bottom', 'left']}>
       <StatusBar style="dark" />
 
       {queue.length > 0 ? (
         <PendingUploadBanner
           count={queue.length}
-          staged={stage != null}
+          state={stage?.status ?? 'review'}
           onOpen={() => setReviewVisible(true)}
-          onCancel={cancelQueue}
+          onCancel={stage?.status === 'handedOff' ? dismissHandedOffQueue : cancelQueue}
         />
       ) : null}
 
@@ -254,7 +327,7 @@ function HealzApp() {
           allowFileAccess={false}
           mediaPlaybackRequiresUserAction
           setSupportMultipleWindows
-          applicationNameForUserAgent="HealzMobile/1.0"
+          applicationNameForUserAgent="HealzMobile/1.0.1"
           onLoadStart={() => {
             setLoading(true);
             setLoadError(false);
@@ -287,25 +360,70 @@ function HealzApp() {
         />
 
         {loading ? (
-          <View style={styles.loadingBar} pointerEvents="none">
+          <View
+            style={[
+              styles.loadingBar,
+              {
+                top: layout.spacing,
+                right: layout.gutter,
+                borderRadius: layout.radius,
+              },
+            ]}
+            pointerEvents="none"
+          >
             <ActivityIndicator size="small" color={COLORS.accent} />
           </View>
         ) : null}
 
         {loadError ? (
-          <View style={styles.errorOverlay}>
-            <Text style={styles.errorTitle}>Не удалось открыть Healz</Text>
-            <Text style={styles.errorText}>Проверьте интернет-соединение. Очередь документов останется на телефоне.</Text>
-            <Pressable style={styles.retryButton} onPress={retry} accessibilityRole="button">
-              <Text style={styles.retryText}>Повторить</Text>
-            </Pressable>
-          </View>
+          <ScrollView
+            style={styles.errorOverlay}
+            contentContainerStyle={[
+              styles.errorContent,
+              { padding: layout.gutter },
+            ]}
+            alwaysBounceVertical={false}
+          >
+            <View style={{ width: layout.readableWidth }}>
+              <Text
+                style={[styles.errorTitle, { fontSize: layout.titleSize }]}
+                accessibilityRole="alert"
+              >
+                Не удалось открыть Healz
+              </Text>
+              <Text style={styles.errorText}>Проверьте интернет-соединение. Очередь документов останется на телефоне.</Text>
+              <Pressable
+                style={[
+                  styles.retryButton,
+                  { minHeight: layout.touchTarget, borderRadius: layout.radius },
+                ]}
+                onPress={retry}
+                accessibilityRole="button"
+              >
+                <Text style={styles.retryText}>Повторить</Text>
+              </Pressable>
+            </View>
+          </ScrollView>
         ) : null}
       </View>
 
       {notice ? (
-        <View style={styles.notice}>
-          <Text style={styles.noticeText}>{notice}</Text>
+        <View style={styles.noticeLayer} pointerEvents="box-none">
+          <View
+            style={[
+              styles.notice,
+              {
+                width: layout.noticeWidth,
+                bottom: layout.gutter,
+                padding: layout.sectionPadding,
+                borderRadius: layout.radius,
+              },
+            ]}
+            accessibilityRole="alert"
+            accessibilityLiveRegion="polite"
+          >
+            <Text style={styles.noticeText}>{notice}</Text>
+          </View>
         </View>
       ) : null}
 
@@ -329,7 +447,7 @@ function HealzApp() {
 
 export default function App() {
   return (
-    <SafeAreaProvider>
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
       <HealzApp />
     </SafeAreaProvider>
   );
@@ -339,12 +457,14 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: COLORS.background },
   webContainer: { flex: 1, backgroundColor: COLORS.background },
   webView: { flex: 1, backgroundColor: COLORS.background },
-  loadingBar: { position: 'absolute', top: 10, right: 12, borderRadius: 20, padding: 7, backgroundColor: 'rgba(255,255,255,0.92)' },
-  errorOverlay: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: COLORS.background },
+  loadingBar: { position: 'absolute', padding: 7, backgroundColor: 'rgba(255,255,255,0.92)' },
+  errorOverlay: { ...StyleSheet.absoluteFill, backgroundColor: COLORS.background },
+  errorContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center' },
   errorTitle: { color: COLORS.heading, fontSize: 20, fontWeight: '700', textAlign: 'center' },
   errorText: { color: COLORS.muted, fontSize: 14, lineHeight: 21, textAlign: 'center', marginTop: 8 },
-  retryButton: { marginTop: 20, minWidth: 140, alignItems: 'center', paddingHorizontal: 18, paddingVertical: 13, borderRadius: 12, backgroundColor: COLORS.accent },
+  retryButton: { alignSelf: 'center', marginTop: 20, minWidth: 140, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18, paddingVertical: 10, backgroundColor: COLORS.accent },
   retryText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
-  notice: { position: 'absolute', left: 14, right: 14, bottom: Platform.OS === 'android' ? 18 : 26, padding: 13, borderRadius: 12, backgroundColor: '#23382F' },
+  noticeLayer: { ...StyleSheet.absoluteFill, alignItems: 'center' },
+  notice: { position: 'absolute', backgroundColor: '#23382F' },
   noticeText: { color: '#FFFFFF', fontSize: 13, lineHeight: 18, textAlign: 'center' },
 });
