@@ -1,0 +1,80 @@
+{
+  "expo": {
+    "name": "Healz",
+    "slug": "healz-mobile",
+    "version": "1.0.0",
+    "scheme": "healz",
+    "orientation": "portrait",
+    "icon": "./assets/healz-icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#FDF8F6",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.healz.mobile"
+    },
+    "android": {
+      "package": "ai.healz.mobile",
+      "versionCode": 1,
+      "allowBackup": false,
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#FDF8F6",
+        "foregroundImage": "./assets/healz-icon.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/healz-icon.png"
+    },
+    "plugins": [
+      [
+        "expo-sharing",
+        {
+          "android": {
+            "enabled": true,
+            "singleShareMimeTypes": [
+              "application/pdf",
+              "application/octet-stream",
+              "image/*"
+            ],
+            "multipleShareMimeTypes": [
+              "application/pdf",
+              "application/octet-stream",
+              "image/*",
+              "*/*"
+            ]
+          }
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#FDF8F6",
+          "image": "./assets/healz-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "buildArchs": [
+              "arm64-v8a"
+            ],
+            "minSdkVersion": 26,
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36,
+            "buildToolsVersion": "36.0.0",
+            "networkInspector": false,
+            "usesCleartextTraffic": false
+          }
+        }
+      ]
+    ]
+  }
+}

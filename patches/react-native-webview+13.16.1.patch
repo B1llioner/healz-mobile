@@ -1,0 +1,156 @@
+diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java
+index 07f73fd..228264f 100644
+--- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java
++++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java
+@@ -3,7 +3,9 @@ package com.reactnativecommunity.webview;
+ import android.Manifest;
+ import android.annotation.TargetApi;
+ import android.app.Activity;
++import android.content.Context;
+ import android.content.pm.PackageManager;
++import android.content.SharedPreferences;
+ import android.net.Uri;
+ import android.os.Build;
+ import android.os.Message;
+@@ -36,6 +38,9 @@ import java.util.ArrayList;
+ import java.util.Collections;
+ import java.util.List;
+ 
++import org.json.JSONArray;
++import org.json.JSONObject;
++
+ public class RNCWebChromeClient extends WebChromeClient implements LifecycleEventListener {
+     protected static final FrameLayout.LayoutParams FULLSCREEN_LAYOUT_PARAMS = new FrameLayout.LayoutParams(
+             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER);
+@@ -50,6 +55,12 @@ public class RNCWebChromeClient extends WebChromeClient implements LifecycleEven
+ 
+     protected static final int COMMON_PERMISSION_REQUEST = 3;
+ 
++    private static final String HEALZ_UPLOAD_PREFS = "healz_upload_bridge";
++    private static final String HEALZ_STAGED_FILES_KEY = "staged_files_v1";
++    private static final String HEALZ_CONSUMED_NONCE_KEY = "consumed_nonce";
++    private static final String HEALZ_CONSUMED_AT_KEY = "consumed_at";
++    private static final long HEALZ_STAGE_TTL_MS = 24L * 60L * 60L * 1000L;
++
+     protected RNCWebView mWebView;
+ 
+     protected View mVideoView;
+@@ -333,9 +344,118 @@ public class RNCWebChromeClient extends WebChromeClient implements LifecycleEven
+         String[] acceptTypes = fileChooserParams.getAcceptTypes();
+         boolean allowMultiple = fileChooserParams.getMode() == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE;
+ 
++        Uri[] stagedFiles = takeHealzStagedFiles(
++                webView,
++                acceptTypes,
++                allowMultiple,
++                fileChooserParams.isCaptureEnabled()
++        );
++        if (stagedFiles != null) {
++            filePathCallback.onReceiveValue(stagedFiles);
++            return true;
++        }
++
+         return this.mWebView.getThemedReactContext().getNativeModule(RNCWebViewModule.class).startPhotoPickerIntent(filePathCallback, acceptTypes, allowMultiple, fileChooserParams.isCaptureEnabled());
+     }
+ 
++    private Uri[] takeHealzStagedFiles(
++            WebView webView,
++            String[] acceptTypes,
++            boolean allowMultiple,
++            boolean captureEnabled
++    ) {
++        if (captureEnabled || webView == null || webView.getUrl() == null) {
++            return null;
++        }
++
++        Uri pageUri = Uri.parse(webView.getUrl());
++        String pagePath = pageUri.getPath();
++        if (!"https".equals(pageUri.getScheme())
++                || !"app.healz.ai".equals(pageUri.getHost())
++                || pagePath == null
++                || !("/app/chat".equals(pagePath) || pagePath.startsWith("/app/chat/"))) {
++            return null;
++        }
++
++        Context context = webView.getContext().getApplicationContext();
++        SharedPreferences preferences = context.getSharedPreferences(HEALZ_UPLOAD_PREFS, Context.MODE_PRIVATE);
++        String rawPayload = preferences.getString(HEALZ_STAGED_FILES_KEY, null);
++        if (rawPayload == null) {
++            return null;
++        }
++
++        try {
++            JSONObject payload = new JSONObject(rawPayload);
++            long createdAt = payload.optLong("createdAt", 0L);
++            if (createdAt <= 0L || System.currentTimeMillis() - createdAt > HEALZ_STAGE_TTL_MS) {
++                preferences.edit().remove(HEALZ_STAGED_FILES_KEY).commit();
++                return null;
++            }
++
++            String nonce = payload.optString("nonce", "");
++            JSONArray files = payload.optJSONArray("files");
++            if (nonce.isEmpty() || files == null || files.length() == 0) {
++                return null;
++            }
++            if (files.length() > 1 && !allowMultiple) {
++                return null;
++            }
++
++            List<Uri> uris = new ArrayList<>();
++            String expectedAuthority = context.getPackageName() + ".HealzUploadFileProvider";
++            for (int index = 0; index < files.length(); index += 1) {
++                JSONObject file = files.getJSONObject(index);
++                String mimeType = file.optString("mimeType", "");
++                if (!isAcceptedHealzMime(mimeType, acceptTypes)) {
++                    return null;
++                }
++
++                Uri uri = Uri.parse(file.optString("uri", ""));
++                if (!"content".equals(uri.getScheme()) || !expectedAuthority.equals(uri.getAuthority())) {
++                    return null;
++                }
++                uris.add(uri);
++            }
++
++            boolean consumed = preferences.edit()
++                    .remove(HEALZ_STAGED_FILES_KEY)
++                    .putString(HEALZ_CONSUMED_NONCE_KEY, nonce)
++                    .putLong(HEALZ_CONSUMED_AT_KEY, System.currentTimeMillis())
++                    .commit();
++            return consumed ? uris.toArray(new Uri[0]) : null;
++        } catch (Exception ignored) {
++            return null;
++        }
++    }
++
++    private boolean isAcceptedHealzMime(String mimeType, String[] acceptTypes) {
++        if (!("application/pdf".equals(mimeType) || mimeType.startsWith("image/"))) {
++            return false;
++        }
++        if (acceptTypes == null || acceptTypes.length == 0) {
++            return false;
++        }
++
++        boolean acceptsPdf = false;
++        boolean acceptsImages = false;
++        boolean acceptsMime = false;
++        for (String rawAcceptType : acceptTypes) {
++            if (rawAcceptType == null) continue;
++            String[] values = rawAcceptType.toLowerCase().split(",");
++            for (String rawValue : values) {
++                String value = rawValue.trim();
++                if ("application/pdf".equals(value)) acceptsPdf = true;
++                if ("image/*".equals(value)) acceptsImages = true;
++                if ("*/*".equals(value)
++                        || value.equals(mimeType)
++                        || (value.endsWith("/*") && mimeType.startsWith(value.substring(0, value.length() - 1)))) {
++                    acceptsMime = true;
++                }
++            }
++        }
++        return acceptsPdf && acceptsImages && acceptsMime;
++    }
++
+     @Override
+     public void onHostResume() {
+         if (mVideoView != null && mVideoView.getSystemUiVisibility() != FULLSCREEN_SYSTEM_UI_VISIBILITY) {
