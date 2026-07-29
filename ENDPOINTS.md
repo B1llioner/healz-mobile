@@ -39,6 +39,8 @@
 
 Обе chooser-сигнатуры важны для Android WebView: в зависимости от момента вызова native callback получает либо исходные `application/pdf,image/*`, либо установленный обработчиком `*/*`. Mobile patch принимает только эти две сигнатуры, требует `multiple`, exact origin/chat path, отсутствие capture и explicit MIME allowlist PDF/JPEG/PNG/WebP/HEIC.
 
+Для iOS native picker предоставляет сам `WKWebView`, но чувствительные file-dialog APIs привязаны к user activation. Поэтому оболочка только на iOS переносит уже существующие mutation + `click()` в синхронный стек исходного trusted tap. Shim активируется лишь на exact origin и `/app/chat[/…]`, проверяет точную наблюдавшуюся структуру composer, не меняет prototype и на 700 мс подавляет только отложенный повтор того же input. Если DOM-контракт изменился, shim ничего не делает и остаётся штатное поведение сайта.
+
 ## Авторизация
 
 ### `GET /api/auth/get-session`

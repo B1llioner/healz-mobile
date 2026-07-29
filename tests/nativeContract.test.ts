@@ -157,3 +157,8 @@ test('React queue does not advertise an expired native stage', () => {
   assert.match(appSource, /queueRef\.current = \[\]/);
   assert.match(appSource, /Подготовленные файлы устарели/);
 });
+
+test('iOS alone receives the synchronous Healz file-input activation shim', () => {
+  assert.match(appSource, /Platform\.OS === 'ios' \? iosFileInputActivationScript : undefined/);
+  assert.match(appSource, /injectedJavaScriptBeforeContentLoaded=/);
+});

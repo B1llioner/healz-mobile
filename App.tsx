@@ -4,6 +4,7 @@ import {
   BackHandler,
   Keyboard,
   Linking,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -34,6 +35,7 @@ import { canAppendToQueue } from './src/files/policy';
 import { prepareImportedFile } from './src/files/prepareFile';
 import { useIncomingShares } from './src/share/useIncomingShares';
 import { useResponsiveLayout } from './src/ui/useResponsiveLayout';
+import { createIosFileInputActivationScript } from './src/web/iosFileInputActivation';
 import { classifyNavigation } from './src/web/urlPolicy';
 
 type ActiveStage = {
@@ -41,6 +43,8 @@ type ActiveStage = {
   count: number;
   status: 'staged' | 'handedOff';
 };
+
+const iosFileInputActivationScript = createIosFileInputActivationScript();
 
 function HealzApp() {
   const layout = useResponsiveLayout();
@@ -328,6 +332,9 @@ function HealzApp() {
           mediaPlaybackRequiresUserAction
           setSupportMultipleWindows
           applicationNameForUserAgent="HealzMobile/1.0.1"
+          injectedJavaScriptBeforeContentLoaded={
+            Platform.OS === 'ios' ? iosFileInputActivationScript : undefined
+          }
           onLoadStart={() => {
             setLoading(true);
             setLoadError(false);
