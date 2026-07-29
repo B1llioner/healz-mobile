@@ -261,7 +261,7 @@ Patch pinned к `react-native-webview@13.16.1`; `postinstall` падает пр�
 
 На iOS `react-native-webview` оставляет file upload системному `WKWebView`: текущий `WKUIDelegate` не переопределяет iOS open panel, поэтому дополнительных entitlements или доступа к `file://` не требуется. Однако live composer вызывает `input.click()` только через 400 мс после tap, а WebKit вправе требовать синхронную user activation для file dialog.
 
-`src/web/iosFileInputActivation.ts` генерирует iOS-only document-start shim. Capture-listener сохраняет исходный React event и срабатывает только при exact HTTPS origin, пути `/app/chat` или вложенном, trusted primary click, точных class tokens кнопки, одном hidden multiple input с наблюдавшимся accept и непосредственной DOM-связи input → trigger. Он синхронно вызывает оригинальный `HTMLInputElement.prototype.click`, после чего на 700 мс shadow-ит `click` только этого экземпляра, чтобы отложенный вызов сайта не открыл второй picker. Собственный descriptor сохраняется и восстанавливается; timer замыкается на старом node и не затрагивает новый input после React re-render. Prototype не изменяется, Android этот script не получает, а несовпадение DOM оставляет штатный handler сайта fallback-ом.
+`src/web/iosFileInputActivation.ts` генерирует iOS-only document-start shim. Capture-listener сохраняет исходный React event и срабатывает только при exact HTTPS origin, пути `/app/chat` или вложенном, trusted primary click, точных class tokens кнопки, одном hidden multiple input с наблюдавшимся accept и непосредственной DOM-связи input → trigger. Он синхронно вызывает оригинальный `HTMLInputElement.prototype.click`, после чего на 700 мс shadow-ит `click` только этого экземпляра, чтобы отложенный вызов сайта не открыл второй picker. Собственный descriptor сохраняется и восстанавливается; timer замыкается на исходном node и никогда не изменяет заменивший его input. Текущий live composer сохраняет identity input при обычном re-render. Если будущая версия сайта начнёт заменять node в первые 400 мс, новый `ref.current` сможет выполнить штатный delayed click, и DOM-контракт нужно будет проверить повторно. Prototype не изменяется, Android этот script не получает, а несовпадение DOM оставляет штатный handler сайта fallback-ом.
 
 ## 11. WebView и сессия
 
@@ -309,13 +309,13 @@ URL policy:
 
 Источник native configuration — `app.json`: intent filters, package/scheme, API/ABI, icon/splash, permission removals, cleartext/backup policy, `orientation: default` и iOS privacy strings камеры/фототеки. Local Expo module обнаруживается через `expo-module.config.json`, patch применяется после `npm ci`. Clean prebuild не требует ручного изменения generated project.
 
-Текущий suite содержит 42 unit/contract-теста. Девять из них проверяют responsive-математику; VM-тесты iOS shim проверяют exact origin/path, trusted gesture, точную DOM-идентичность, синхронный вызов, подавление 400-мс дубля и descriptor-safe cleanup после React re-render.
+Текущий suite содержит 42 unit/contract-теста. Девять из них проверяют responsive-математику; VM-тесты iOS shim проверяют exact origin/path, trusted gesture, точную DOM-идентичность, синхронный вызов, подавление 400-мс дубля и descriptor-safe cleanup, который не затрагивает replacement node.
 
 ## 15. Статус платформ
 
 Один TypeScript/WebView-shell используется для iOS и Android. На обеих платформах предусмотрены auth/session, web-навигация, external links, responsive native overlay и штатный file picker сайта. Для iOS заданы `NSCameraUsageDescription`, `NSPhotoLibraryUsageDescription`, поддержка iPad и landscape.
 
-Custom pipeline `Share → Healz` (`expo-sharing` receiver, Kotlin importer, FileProvider и WebChromeClient handoff) сейчас Android-only. Для iOS нужна отдельная Share Extension и Swift importer/provider, при этом TS policy и review UI можно переиспользовать. Локальная iOS-сборка пока заблокирована до установки компонента платформы iOS 26.5 в Xcode; это ограничение toolchain, а не отдельная кодовая база.
+Custom pipeline `Share → Healz` (`expo-sharing` receiver, Kotlin importer, FileProvider и WebChromeClient handoff) сейчас Android-only. Для iOS нужна отдельная Share Extension и Swift importer/provider, при этом TS policy и review UI можно переиспользовать. Matching iOS 26.5 runtime установлен; self-contained Release 1.0.1 собран, проверен `codesign`, установлен и запущен на физическом iPhone. Авторизованный upload smoke остаётся ручным действием владельца аккаунта.
 
 ## 16. Расширение после MVP
 

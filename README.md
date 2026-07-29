@@ -123,6 +123,40 @@ npx expo-doctor@latest
 
 `postinstall` применяет зафиксированный `patch-package` patch к WebView 13.16.1. Он нужен только для передачи staged URI стандартному file chooser callback; при обновлении WebView patch должен пройти повторный review.
 
+## Локальная сборка на iPhone
+
+Для физического iPhone нужны Xcode, добавленный в Xcode Apple ID, Developer Mode на телефоне и USB-подключение. TestFlight для локального запуска не нужен. Xcode 26 также должен иметь matching iOS runtime: `ibtool` и `actool` используют его для storyboard/assets даже при destination на физическом устройстве.
+
+```bash
+sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+xcodebuild -downloadPlatform iOS -architectureVariant arm64
+
+npm ci
+npx expo prebuild --platform ios --clean
+cd ios
+pod install
+cd ..
+open ios/Healz.xcworkspace
+```
+
+CocoaPods написан на Ruby, но Ruby и Pods не попадают в runtime приложения: `pod install` лишь связывает native-зависимости React Native/Expo и генерирует workspace. Открывать нужно `Healz.xcworkspace`, а не `Healz.xcodeproj`. В Xcode нужно выбрать target `Healz`, в `Signing & Capabilities` оставить automatic signing и указать свою Team; затем выбрать подключённый iPhone и нажать Run.
+
+CLI-эквивалент для self-contained Release build:
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+xcodebuild -workspace ios/Healz.xcworkspace \
+  -scheme Healz \
+  -configuration Release \
+  -destination 'id=<DEVICE_UDID>' \
+  -derivedDataPath /tmp/HealzDerivedData \
+  DEVELOPMENT_TEAM=<TEAM_ID> \
+  CODE_SIGN_STYLE=Automatic \
+  -allowProvisioningUpdates \
+  -allowProvisioningDeviceRegistration \
+  build
+```
+
 ## Установка и статус проверки
 
 ```bash
@@ -131,7 +165,7 @@ adb install -r Healz-1.0.1-upload-fix-arm64.apk
 
 Release-параметры: package `ai.healz.mobile`, versionName/versionCode `1.0.1` / `2`, min/target/compile SDK `26` / `36` / `36`, ABI `arm64-v8a`. SHA-256 APK: `a840b29c01a0c8055ca8b9544c6bfe766298f8d14cabf69b4f81345924e1f9fe`.
 
-Подтверждены clean prebuild/assembleRelease, lintVital, v2-подпись, package/SDK/ABI, 42/42 unit/contract tests, TypeScript и Expo Doctor 20/20. В это число входят 9 responsive-тестов и отдельные VM-тесты iOS-активации file input: exact origin/path, trusted tap, DOM identity, синхронный picker, подавление отложенного дубля и безопасное восстановление после React re-render. На физическом Android после установки отдельно нужно проверить cold-restart авторизации, share нескольких файлов из Gmail/Files/галереи, читаемость HEIC, передачу файлов по скрепке, Back и внешние ссылки.
+Подтверждены clean prebuild/assembleRelease, lintVital, v2-подпись, package/SDK/ABI, 42/42 unit/contract tests, TypeScript и Expo Doctor 20/20. В это число входят 9 responsive-тестов и отдельные VM-тесты iOS-активации file input: exact origin/path, trusted tap, DOM identity, синхронный picker, подавление отложенного дубля и descriptor-safe cleanup, который не затрагивает replacement node. iOS Release 1.0.1 со встроенным Hermes bundle собран, проверен `codesign`, установлен и запущен на физическом iPhone 17 Pro с iOS 26.5.2. На физическом Android после установки отдельно нужно проверить cold-restart авторизации, share нескольких файлов из Gmail/Files/галереи, читаемость HEIC, передачу файлов по скрепке, Back и внешние ссылки.
 
 ## Структура
 
@@ -158,7 +192,7 @@ Release-параметры: package `ai.healz.mobile`, versionName/versionCode `
 - срок серверной web-сессии определяет Healz; приложение не обходит server logout;
 - изменение маршрута `/app/chat` или атрибутов file input потребует повторной smoke-проверки;
 - общий WebView-shell, сессия, навигация и обычный file picker предусмотрены для iOS; добавлены privacy strings камеры/фототеки, landscape и iOS-only document-start shim, который сохраняет trusted tap при известной 400-мс задержке публичного composer; custom `Share → Healz` пока остаётся Android-only;
-- локальная iOS-сборка сейчас заблокирована отсутствующим компонентом платформы iOS 26.5 в Xcode; после его установки проект можно собрать и поставить на подключённый iPhone.
+- авторизованный live smoke полного upload на iOS остаётся ручной проверкой: оболочка установлена и запущена, но вход, выбор медицинского файла и серверный `POST /api/documents` требуют явных действий владельца аккаунта.
 
 `npm audit --omit=dev` для зафиксированного lockfile показывает 12 moderate findings в одной build-time цепочке Expo config → `xcode@3.0.1` → `uuid@7.0.3`; она не входит в Android runtime. `npm audit fix --force` не применён, потому что нарушает совместимость Expo SDK 57.
 
