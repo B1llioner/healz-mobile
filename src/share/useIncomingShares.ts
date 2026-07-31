@@ -4,8 +4,8 @@ import * as Sharing from 'expo-sharing';
 
 import HealzUploadBridge, {
   type ImportBatchResult,
-  type SharedFileInput,
 } from '../../modules/healz-upload-bridge';
+import { toSharedFileInputs } from './payloads';
 import { isIncomingShareLink } from '../web/urlPolicy';
 
 type UseIncomingSharesOptions = {
@@ -22,7 +22,8 @@ export function useIncomingShares({ onBatch, onError }: UseIncomingSharesOptions
   onErrorRef.current = onError;
 
   useEffect(() => {
-    if (Platform.OS !== 'android') return;
+    if (Platform.OS !== 'android' && Platform.OS !== 'ios') return;
+    const platform = Platform.OS;
 
     const drain = async () => {
       if (drainingRef.current) return;
@@ -31,17 +32,16 @@ export function useIncomingShares({ onBatch, onError }: UseIncomingSharesOptions
 
       drainingRef.current = true;
       try {
-        const files: SharedFileInput[] = payloads
-          .filter(
-            (payload) =>
-              (payload.shareType === 'file' || payload.shareType === 'image') &&
-              typeof payload.value === 'string' &&
-              payload.value.startsWith('content://'),
-          )
-          .map((payload) => ({
-            uri: payload.value ?? '',
-            mimeType: payload.mimeType ?? 'application/octet-stream',
-          }));
+        let importPayloads = payloads;
+        if (platform === 'ios') {
+          try {
+            const resolved = await Sharing.getResolvedSharedPayloadsAsync();
+            if (resolved.length > 0) importPayloads = resolved;
+          } catch {
+            // Raw file URLs remain usable if metadata resolution fails.
+          }
+        }
+        const files = toSharedFileInputs(importPayloads, platform);
 
         if (files.length === 0) {
           Sharing.clearSharedPayloads();

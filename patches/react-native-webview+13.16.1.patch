@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java
-index 07f73fd..f7337f0 100644
+index 07f73fd..f43d89f 100644
 --- a/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java
 +++ b/node_modules/react-native-webview/android/src/main/java/com/reactnativecommunity/webview/RNCWebChromeClient.java
 @@ -3,7 +3,9 @@ package com.reactnativecommunity.webview;
@@ -12,7 +12,7 @@ index 07f73fd..f7337f0 100644
  import android.net.Uri;
  import android.os.Build;
  import android.os.Message;
-@@ -35,3 +37,7 @@ import com.reactnativecommunity.webview.events.TopOpenWindowEvent;
+@@ -35,6 +37,10 @@ import com.reactnativecommunity.webview.events.TopOpenWindowEvent;
  import java.util.ArrayList;
  import java.util.Collections;
  import java.util.List;
@@ -20,6 +20,9 @@ index 07f73fd..f7337f0 100644
 +
 +import org.json.JSONArray;
 +import org.json.JSONObject;
+ 
+ public class RNCWebChromeClient extends WebChromeClient implements LifecycleEventListener {
+     protected static final FrameLayout.LayoutParams FULLSCREEN_LAYOUT_PARAMS = new FrameLayout.LayoutParams(
 @@ -50,6 +56,12 @@ public class RNCWebChromeClient extends WebChromeClient implements LifecycleEven
  
      protected static final int COMMON_PERMISSION_REQUEST = 3;
@@ -161,3 +164,287 @@ index 07f73fd..f7337f0 100644
      @Override
      public void onHostResume() {
          if (mVideoView != null && mVideoView.getSystemUiVisibility() != FULLSCREEN_SYSTEM_UI_VISIBILITY) {
+diff --git a/node_modules/react-native-webview/apple/RNCWebViewImpl.m b/node_modules/react-native-webview/apple/RNCWebViewImpl.m
+index 7f5c24d..ee1b840 100644
+--- a/node_modules/react-native-webview/apple/RNCWebViewImpl.m
++++ b/node_modules/react-native-webview/apple/RNCWebViewImpl.m
+@@ -20,6 +20,15 @@
+ static NSTimer *keyboardTimer;
+ static NSString *const HistoryShimName = @"ReactNativeHistoryShim";
+ static NSString *const MessageHandlerName = @"ReactNativeWebView";
++#if TARGET_OS_IOS
++static NSString *const HealzUploadChooserHandlerName = @"HealzUploadChooser";
++static NSString *const HealzUploadStageChangedNotification = @"HealzUploadStageDidChange";
++static NSString *const HealzUploadStagedKey = @"staged_files_v1";
++static NSString *const HealzUploadConsumedNonceKey = @"consumed_nonce";
++static NSString *const HealzUploadConsumedAtKey = @"consumed_at";
++static NSTimeInterval const HealzUploadStageTTL = 24 * 60 * 60;
++static NSTimeInterval const HealzUploadChooserArmTTL = 1.5;
++#endif
+ static NSURLCredential* clientAuthenticationCredential;
+ static NSDictionary* customCertificatesForHost;
+ 
+@@ -152,6 +161,10 @@ RCTAutoInsetsProtocol>
+ #if defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 130000 /* __IPHONE_13_0 */
+   BOOL _savedAutomaticallyAdjustsScrollIndicatorInsets;
+ #endif
++#if TARGET_OS_IOS
++  NSTimeInterval _healzUploadChooserArmedUntil;
++  NSString *_healzUploadChooserArmedPath;
++#endif
+ }
+ 
+ - (instancetype)initWithFrame:(CGRect)frame
+@@ -216,6 +229,12 @@ RCTAutoInsetsProtocol>
+                                           selector:@selector(appWillResignActive)
+                                               name:UIApplicationWillResignActiveNotification
+                                             object:nil];
++#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 180400
++  [[NSNotificationCenter defaultCenter] addObserver:self
++                                           selector:@selector(healzUploadStageDidChange)
++                                               name:HealzUploadStageChangedNotification
++                                             object:nil];
++#endif
+   if (@available(iOS 12.0, *)) {
+     // Workaround for a keyboard dismissal bug present in iOS 12
+     // https://openradar.appspot.com/radar?id=5018321736957952
+@@ -418,7 +437,184 @@ RCTAutoInsetsProtocol>
+       completionHandler(nil);
+   }];
+ }
+-#endif //Target_OS_OSX
++#elif TARGET_OS_IOS && __IPHONE_OS_VERSION_MAX_ALLOWED >= 180400
++
++- (BOOL)healzUploadIsChatPath:(NSString *)path
++{
++  return [path isEqualToString:@"/app/chat"] || [path hasPrefix:@"/app/chat/"];
++}
++
++- (BOOL)healzUploadIsChatURL:(NSURL *)url
++{
++  if (url == nil || ![url.scheme.lowercaseString isEqualToString:@"https"] || ![url.host.lowercaseString isEqualToString:@"app.healz.ai"]) {
++    return NO;
++  }
++  if (url.port != nil && url.port.integerValue != 443) {
++    return NO;
++  }
++  return [self healzUploadIsChatPath:url.path];
++}
++
++- (BOOL)healzUploadIsSupportedMimeType:(NSString *)mimeType
++{
++  return [mimeType isEqualToString:@"application/pdf"]
++      || [mimeType isEqualToString:@"image/jpeg"]
++      || [mimeType isEqualToString:@"image/png"]
++      || [mimeType isEqualToString:@"image/webp"]
++      || [mimeType isEqualToString:@"image/heic"];
++}
++
++- (NSArray<NSURL *> *)healzUploadStagedURLsConsuming:(BOOL)consume
++{
++  NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
++  NSString *rawPayload = [defaults stringForKey:HealzUploadStagedKey];
++  if (rawPayload == nil) {
++    return nil;
++  }
++
++  NSData *payloadData = [rawPayload dataUsingEncoding:NSUTF8StringEncoding];
++  NSDictionary *payload = payloadData == nil
++      ? nil
++      : [NSJSONSerialization JSONObjectWithData:payloadData options:0 error:nil];
++  if (![payload isKindOfClass:[NSDictionary class]]) {
++    return nil;
++  }
++
++  NSString *nonce = payload[@"nonce"];
++  NSNumber *createdAt = payload[@"createdAt"];
++  NSArray *files = payload[@"files"];
++  NSTimeInterval now = [NSDate date].timeIntervalSince1970;
++  if (![nonce isKindOfClass:[NSString class]]
++      || nonce.length == 0
++      || ![createdAt isKindOfClass:[NSNumber class]]
++      || now - createdAt.doubleValue / 1000.0 > HealzUploadStageTTL
++      || ![files isKindOfClass:[NSArray class]]
++      || files.count == 0
++      || files.count > 10) {
++    return nil;
++  }
++
++  NSURL *applicationSupport = [[[NSFileManager defaultManager]
++      URLsForDirectory:NSApplicationSupportDirectory
++      inDomains:NSUserDomainMask] firstObject];
++  NSURL *pendingRoot = [applicationSupport URLByAppendingPathComponent:@"healz-pending" isDirectory:YES];
++  pendingRoot = [[pendingRoot URLByStandardizingPath] URLByResolvingSymlinksInPath];
++  if (pendingRoot == nil) {
++    return nil;
++  }
++
++  NSMutableArray<NSURL *> *urls = [NSMutableArray arrayWithCapacity:files.count];
++  long long totalSize = 0;
++  for (id rawFile in files) {
++    if (![rawFile isKindOfClass:[NSDictionary class]]) {
++      return nil;
++    }
++    NSDictionary *file = rawFile;
++    NSString *identifier = file[@"id"];
++    NSString *mimeType = file[@"mimeType"];
++    NSString *rawURL = file[@"uri"];
++    NSUUID *uuid = [identifier isKindOfClass:[NSString class]]
++        ? [[NSUUID alloc] initWithUUIDString:identifier]
++        : nil;
++    NSURL *url = [rawURL isKindOfClass:[NSString class]] ? [NSURL URLWithString:rawURL] : nil;
++    if (uuid == nil || ![self healzUploadIsSupportedMimeType:mimeType] || !url.isFileURL) {
++      return nil;
++    }
++
++    url = [[url URLByStandardizingPath] URLByResolvingSymlinksInPath];
++    NSURL *itemRoot = [pendingRoot URLByAppendingPathComponent:uuid.UUIDString.lowercaseString isDirectory:YES];
++    NSString *itemPrefix = [itemRoot.path stringByAppendingString:@"/"];
++    BOOL isDirectory = NO;
++    BOOL exists = [[NSFileManager defaultManager] fileExistsAtPath:url.path isDirectory:&isDirectory];
++    NSDictionary *attributes = exists && !isDirectory
++        ? [[NSFileManager defaultManager] attributesOfItemAtPath:url.path error:nil]
++        : nil;
++    NSNumber *size = attributes[NSFileSize];
++    if (![url.path hasPrefix:itemPrefix]
++        || ![size isKindOfClass:[NSNumber class]]
++        || size.longLongValue < 0
++        || size.longLongValue > 20LL * 1024LL * 1024LL) {
++      return nil;
++    }
++    totalSize += size.longLongValue;
++    if (totalSize > 100LL * 1024LL * 1024LL) {
++      return nil;
++    }
++    [urls addObject:url];
++  }
++
++  if (consume) {
++    // Write the consumed marker first so the React polling loop can observe
++    // either staged or consumed, never a transient empty state.
++    [defaults setObject:nonce forKey:HealzUploadConsumedNonceKey];
++    [defaults setDouble:now * 1000.0 forKey:HealzUploadConsumedAtKey];
++    [defaults removeObjectForKey:HealzUploadStagedKey];
++  }
++  return urls;
++}
++
++- (BOOL)healzUploadHasValidStage
++{
++  return [self healzUploadStagedURLsConsuming:NO] != nil;
++}
++
++- (void)healzUploadRefreshUIDelegate
++{
++  if (_webView == nil) {
++    return;
++  }
++  _webView.UIDelegate = nil;
++  _webView.UIDelegate = self;
++}
++
++- (void)healzUploadStageDidChange
++{
++  if (![NSThread isMainThread]) {
++    dispatch_async(dispatch_get_main_queue(), ^{
++      [self healzUploadStageDidChange];
++    });
++    return;
++  }
++  [self healzUploadRefreshUIDelegate];
++}
++
++- (BOOL)respondsToSelector:(SEL)selector
++{
++  SEL openPanelSelector = @selector(webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:);
++  if (selector == openPanelSelector) {
++    if (@available(iOS 18.4, *)) {
++      return [self healzUploadHasValidStage];
++    }
++    return NO;
++  }
++  return [super respondsToSelector:selector];
++}
++
++- (void)webView:(WKWebView *)webView
++    runOpenPanelWithParameters:(WKOpenPanelParameters *)parameters
++    initiatedByFrame:(WKFrameInfo *)frame
++    completionHandler:(void (^)(NSArray<NSURL *> * _Nullable URLs))completionHandler API_AVAILABLE(ios(18.4))
++{
++  NSTimeInterval now = [NSDate date].timeIntervalSince1970;
++  BOOL armed = _healzUploadChooserArmedUntil >= now
++      && [_healzUploadChooserArmedPath isEqualToString:webView.URL.path];
++  _healzUploadChooserArmedUntil = 0;
++  _healzUploadChooserArmedPath = nil;
++
++  if (!armed
++      || !frame.isMainFrame
++      || ![self healzUploadIsChatURL:webView.URL]
++      || !parameters.allowsMultipleSelection
++      || parameters.allowsDirectories) {
++    completionHandler(nil);
++    return;
++  }
++
++  NSArray<NSURL *> *urls = [self healzUploadStagedURLsConsuming:YES];
++  completionHandler(urls);
++  [self healzUploadRefreshUIDelegate];
++}
++#endif // TARGET_OS_OSX / iOS 18.4+
+ 
+ - (WKWebViewConfiguration *)setUpWkWebViewConfig
+ {
+@@ -490,6 +686,10 @@ RCTAutoInsetsProtocol>
+   // Shim the HTML5 history API:
+   [wkWebViewConfig.userContentController addScriptMessageHandler:[[RNCWeakScriptMessageDelegate alloc] initWithDelegate:self]
+                                                             name:HistoryShimName];
++#if TARGET_OS_IOS && __IPHONE_OS_VERSION_MAX_ALLOWED >= 180400
++  [wkWebViewConfig.userContentController addScriptMessageHandler:[[RNCWeakScriptMessageDelegate alloc] initWithDelegate:self]
++                                                            name:HealzUploadChooserHandlerName];
++#endif
+   [self resetupScripts:wkWebViewConfig];
+ 
+   if(@available(macos 10.11, ios 9.0, *)) {
+@@ -616,6 +816,9 @@ RCTAutoInsetsProtocol>
+   if (_webView) {
+     [_webView.configuration.userContentController removeScriptMessageHandlerForName:HistoryShimName];
+     [_webView.configuration.userContentController removeScriptMessageHandlerForName:MessageHandlerName];
++#if TARGET_OS_IOS && __IPHONE_OS_VERSION_MAX_ALLOWED >= 180400
++    [_webView.configuration.userContentController removeScriptMessageHandlerForName:HealzUploadChooserHandlerName];
++#endif
+     [_webView removeObserver:self forKeyPath:@"estimatedProgress"];
+     [_webView removeFromSuperview];
+     if (@available(iOS 15.0, macOS 12.0, *)) {
+@@ -788,5 +991,32 @@ RCTAutoInsetsProtocol>
+       [event addEntriesFromDictionary: @{@"url": message.frameInfo.request.URL.absoluteString}];
+       _onMessage(event);
+     }
++#if TARGET_OS_IOS && __IPHONE_OS_VERSION_MAX_ALLOWED >= 180400
++  } else if ([message.name isEqualToString:HealzUploadChooserHandlerName]) {
++    if (@available(iOS 18.4, *)) {
++      NSDictionary *body = [message.body isKindOfClass:[NSDictionary class]] ? message.body : nil;
++      NSNumber *version = body[@"version"];
++      NSNumber *multiple = body[@"multiple"];
++      NSString *accept = body[@"accept"];
++      NSString *path = body[@"path"];
++      BOOL trustedAccept = [accept isEqualToString:@"application/pdf,image/*"]
++          || [accept isEqualToString:@"*/*"];
++      if (message.frameInfo.isMainFrame
++          && [self healzUploadIsChatURL:message.frameInfo.request.URL]
++          && [version isKindOfClass:[NSNumber class]]
++          && version.integerValue == 1
++          && [multiple isKindOfClass:[NSNumber class]]
++          && multiple.boolValue
++          && trustedAccept
++          && [path isKindOfClass:[NSString class]]
++          && [self healzUploadIsChatPath:path]
++          && [path isEqualToString:_webView.URL.path]
++          && [self healzUploadHasValidStage]) {
++        _healzUploadChooserArmedPath = [path copy];
++        _healzUploadChooserArmedUntil = [NSDate date].timeIntervalSince1970 + HealzUploadChooserArmTTL;
++        [self healzUploadRefreshUIDelegate];
++      }
++    }
++#endif
+   }
+ }

@@ -135,6 +135,7 @@ function createComposer() {
 
 function createEnvironment(options: {
   hostname?: string;
+  nativeBridge?: 'available' | 'missing' | 'throws';
   pathname?: string;
   port?: string;
   protocol?: string;
@@ -143,6 +144,8 @@ function createEnvironment(options: {
   const timers: Timer[] = [];
   const clicks: FakeInput[] = [];
   const clickOwnDescriptors: boolean[] = [];
+  const bridgeMessages: unknown[] = [];
+  const eventOrder: string[] = [];
   let timerId = 0;
   const location = {
     hostname: options.hostname ?? 'app.healz.ai',
@@ -161,6 +164,19 @@ function createEnvironment(options: {
       timers.push({ callback, delay, id });
       return id;
     },
+    webkit: options.nativeBridge === 'missing' ? undefined : {
+      messageHandlers: {
+        HealzUploadChooser: {
+          postMessage(message: unknown) {
+            eventOrder.push('bridge');
+            if (options.nativeBridge === 'throws') {
+              throw new Error('native bridge unavailable');
+            }
+            bridgeMessages.push(message);
+          },
+        },
+      },
+    },
   };
   const document = {
     addEventListener(type: string, listener: (event: Record<string, unknown>) => void, capture: boolean) {
@@ -173,6 +189,7 @@ function createEnvironment(options: {
   FakeInput.prototype.click = function click() {
     clickOwnDescriptors.push(Object.hasOwn(this, 'click'));
     clicks.push(this);
+    eventOrder.push('click');
   };
 
   vm.runInNewContext(createIosFileInputActivationScript(), {
@@ -199,9 +216,11 @@ function createEnvironment(options: {
   };
 
   return {
+    bridgeMessages,
     clickOwnDescriptors,
     clicks,
     dispatchClick,
+    eventOrder,
     listeners,
     location,
     runTimersThrough,
@@ -224,6 +243,13 @@ test('opens the exact live composer input synchronously and suppresses the 400ms
     const { icon, input } = createComposer();
     environment.dispatchClick(icon);
 
+    assert.deepEqual(JSON.parse(JSON.stringify(environment.bridgeMessages)), [{
+      accept: 'application/pdf,image/*',
+      multiple: true,
+      path: '/app/chat/case-1',
+      version: 1,
+    }]);
+    assert.deepEqual(environment.eventOrder, ['bridge', 'click']);
     assert.deepEqual(environment.clicks, [input]);
     assert.deepEqual(environment.clickOwnDescriptors, [false]);
     assert.equal(input.accept, '*/*');
@@ -261,10 +287,17 @@ test('keeps the listener origin-scoped and evaluates the chat path at click time
     const { icon, input } = createComposer();
     environment.dispatchClick(icon);
     assert.equal(environment.clicks.length, 0);
+    assert.equal(environment.bridgeMessages.length, 0);
 
     environment.location.pathname = '/app/chat';
     environment.dispatchClick(icon);
     assert.deepEqual(environment.clicks, [input]);
+    assert.deepEqual(JSON.parse(JSON.stringify(environment.bridgeMessages)), [{
+      accept: 'application/pdf,image/*',
+      multiple: true,
+      path: '/app/chat',
+      version: 1,
+    }]);
   } finally {
     environment.restore();
   }
@@ -276,6 +309,7 @@ test('ignores untrusted clicks and buttons that are not the paperclip next to th
     const { composer, icon, input } = createComposer();
     environment.dispatchClick(icon, false);
     assert.equal(environment.clicks.length, 0);
+    assert.equal(environment.bridgeMessages.length, 0);
 
     const otherButton = new FakeButton();
     const otherIcon = new FakeElement('svg');
@@ -283,10 +317,12 @@ test('ignores untrusted clicks and buttons that are not the paperclip next to th
     composer.append(otherButton);
     environment.dispatchClick(otherIcon);
     assert.equal(environment.clicks.length, 0);
+    assert.equal(environment.bridgeMessages.length, 0);
 
     input.disabled = true;
     environment.dispatchClick(icon);
     assert.equal(environment.clicks.length, 0);
+    assert.equal(environment.bridgeMessages.length, 0);
   } finally {
     environment.restore();
   }
@@ -301,6 +337,37 @@ test('fails closed when more than one matching file input shares the composer', 
     extraInput.parentElement = composer;
 
     environment.dispatchClick(icon);
+    assert.equal(environment.clicks.length, 0);
+    assert.equal(environment.bridgeMessages.length, 0);
+  } finally {
+    environment.restore();
+  }
+});
+
+test('keeps the synchronous stock picker path when the optional native handler is absent or throws', () => {
+  for (const nativeBridge of ['missing', 'throws'] as const) {
+    const environment = createEnvironment({ nativeBridge });
+    try {
+      const { icon, input } = createComposer();
+      environment.dispatchClick(icon);
+
+      assert.deepEqual(environment.clicks, [input]);
+      assert.equal(environment.bridgeMessages.length, 0);
+      assert.equal(environment.eventOrder.at(-1), 'click');
+    } finally {
+      environment.restore();
+    }
+  }
+});
+
+test('does not arm the native chooser for an unobserved file accept contract', () => {
+  const environment = createEnvironment();
+  try {
+    const { icon, input } = createComposer();
+    input.accept = 'image/png';
+    environment.dispatchClick(icon);
+
+    assert.equal(environment.bridgeMessages.length, 0);
     assert.equal(environment.clicks.length, 0);
   } finally {
     environment.restore();

@@ -122,6 +122,21 @@ export function createIosFileInputActivationScript(): string {
       activeShadows.set(input, state);
     };
 
+    const armNativeStagedChooser = (input) => {
+      try {
+        const handler = window.webkit?.messageHandlers?.HealzUploadChooser;
+        if (!handler || typeof handler.postMessage !== 'function') return;
+        handler.postMessage({
+          version: 1,
+          path: location.pathname,
+          multiple: input.multiple === true,
+          accept: input.accept,
+        });
+      } catch {
+        // Stock Safari picker remains available when the optional bridge is absent.
+      }
+    };
+
     document.addEventListener('click', (event) => {
       if (
         !isChatPath()
@@ -135,6 +150,7 @@ export function createIosFileInputActivationScript(): string {
       if (!input) return;
 
       try {
+        armNativeStagedChooser(input);
         input.setAttribute('accept', '*/*');
         input.removeAttribute('capture');
         nativeInputClick.call(input);
@@ -145,4 +161,3 @@ export function createIosFileInputActivationScript(): string {
     }, true);
   })(); true;`;
 }
-

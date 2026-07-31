@@ -234,9 +234,21 @@ function HealzApp() {
   }, [reviewVisible]);
 
   const removeFile = useCallback((id: string) => {
+    const previousStage = stageRef.current;
+    // Invalidate the React nonce before touching native state. An in-flight
+    // poll will then ignore a `none` result instead of wiping the remaining
+    // queue after discardFiles clears a staged batch.
+    updateStage(null);
     updateQueue((items) => items.filter((item) => item.id !== id));
+
+    // Once WebKit/Chromium has received the file URL, it may still be reading
+    // the bytes. Keep handed-off files alive until the normal TTL cleanup.
+    if (previousStage?.status === 'handedOff') return;
+
+    // For a staged batch discardFiles atomically removes this queue item and
+    // clears the native stage because it contains the same id.
     void HealzUploadBridge.discardFiles([id]);
-  }, [updateQueue]);
+  }, [updateQueue, updateStage]);
 
   const cancelQueue = useCallback(() => {
     const ids = queueRef.current.map((item) => item.id);
@@ -331,7 +343,7 @@ function HealzApp() {
           allowFileAccess={false}
           mediaPlaybackRequiresUserAction
           setSupportMultipleWindows
-          applicationNameForUserAgent="HealzMobile/1.0.1"
+          applicationNameForUserAgent="HealzMobile/1.0.2"
           injectedJavaScriptBeforeContentLoaded={
             Platform.OS === 'ios' ? iosFileInputActivationScript : undefined
           }

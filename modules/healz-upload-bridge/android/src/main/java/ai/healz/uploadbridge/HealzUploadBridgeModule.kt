@@ -31,7 +31,8 @@ private const val CONSUMED_AT_KEY = "consumed_at"
 @OptimizedRecord
 data class SharedFileInput(
   @Field val uri: String = "",
-  @Field val mimeType: String = "application/octet-stream"
+  @Field val mimeType: String = "application/octet-stream",
+  @Field val displayName: String? = null
 ) : Record
 
 @OptimizedRecord
@@ -149,7 +150,7 @@ class HealzUploadBridgeModule : Module() {
       }
 
       val metadata = queryMetadata(sourceUri)
-      val displayName = metadata.name?.let(::sanitizeName)
+      val displayName = (metadata.name ?: payload.displayName)?.let(::sanitizeName)
       if (metadata.size != null && metadata.size > MAX_IMPORT_FILE_BYTES) {
         issues += ImportIssue("file_too_large", displayName)
         return@forEachIndexed

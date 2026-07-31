@@ -37,9 +37,11 @@
 - выбор файла запускает загрузку документа, после чего карточка файла появляется в composer;
 - сама отправка сообщения остается отдельным действием пользователя.
 
-Обе chooser-сигнатуры важны для Android WebView: в зависимости от момента вызова native callback получает либо исходные `application/pdf,image/*`, либо установленный обработчиком `*/*`. Mobile patch принимает только эти две сигнатуры, требует `multiple`, exact origin/chat path, отсутствие capture и explicit MIME allowlist PDF/JPEG/PNG/WebP/HEIC.
+Обе chooser-сигнатуры важны для native handoff. Android callback в зависимости от момента получает исходные `application/pdf,image/*` либо установленный обработчиком `*/*`; iOS arm-message также принимает только эти две наблюдавшиеся формы. Mobile patch дополнительно требует `multiple`, exact origin/chat path и explicit MIME allowlist PDF/JPEG/PNG/WebP/HEIC; Android отклоняет capture, iOS — directory selection и не-main-frame вызовы.
 
-Для iOS native picker предоставляет сам `WKWebView`, но чувствительные file-dialog APIs привязаны к user activation. Поэтому оболочка только на iOS переносит уже существующие mutation + `click()` в синхронный стек исходного trusted tap. Shim активируется лишь на exact origin и `/app/chat[/…]`, проверяет точную наблюдавшуюся структуру composer, не меняет prototype и на 700 мс подавляет только отложенный повтор того же input. Если DOM-контракт изменился, shim ничего не делает и остаётся штатное поведение сайта.
+На iOS 18.4+ document-start shim переносит `input.click()` в синхронный стек исходного trusted tap и перед ним отправляет native handler сообщение `HealzUploadChooser` с path/multiple/accept. Shim активируется только на exact origin и `/app/chat[/…]`, проверяет точную наблюдавшуюся DOM-структуру composer, не меняет prototype и на 700 мс подавляет лишь отложенный повтор того же input.
+
+Native handler при наличии valid stage одноразово вооружает chooser на 1.5 секунды. Patched `WKUIDelegate` затем проверяет main frame, тот же chat path, `multiple`, запрет directories, TTL, MIME/размеры и принадлежность каждого `file://` URL private `Application Support/healz-pending`, после чего передаёт staged batch HTML input и помечает nonce consumed. Когда stage отсутствует, optional open-panel callback не объявляется и остаётся штатный picker `WKWebView`. Если stage есть, но chooser не прошёл arm/main-frame/path guards, staged медицинские URL не выдаются и неожиданный chooser завершается fail-closed; это намеренно отличается от обычного fallback.
 
 ## Авторизация
 
@@ -105,7 +107,7 @@
 
 ## Загрузка документов
 
-В текущем публичном bundle server config содержит `documents.maxFileSize: 0x1400000`, то есть 20 МиБ на один загружаемый файл. Этот upload-предел продублирован в TypeScript и Kotlin guardrails мобильного приложения. Локальный importer принимает исходник до 50 МиБ, чтобы изображение можно было уменьшить до серверного лимита; staging всё равно отклоняет выбранный результат больше 20 МиБ. Очередь дополнительно ограничена 100 МиБ и 10 файлами.
+В текущем публичном bundle server config содержит `documents.maxFileSize: 0x1400000`, то есть 20 МиБ на один загружаемый файл. Этот upload-предел продублирован в TypeScript, Kotlin, Swift и platform WebView guardrails мобильного приложения. Локальный importer принимает исходник до 50 МиБ, чтобы изображение можно было уменьшить до серверного лимита; staging всё равно отклоняет выбранный результат больше 20 МиБ. Очередь дополнительно ограничена 100 МиБ и 10 файлами.
 
 ### `POST /api/documents`
 
@@ -119,7 +121,7 @@
 - после ответа карточка документа появилась в composer;
 - сообщение в чат автоматически не отправилось.
 
-Названия multipart-полей и структура ответа намеренно не закрепляются в мобильном приложении: ими владеет текущая версия сайта. Нативный мост возвращает WebView только один или несколько локальных `content://` URI через стандартный file chooser callback.
+Названия multipart-полей и структура ответа намеренно не закрепляются в мобильном приложении: ими владеет текущая версия сайта. Нативный мост возвращает WebView один или несколько локальных URL через стандартный file chooser callback: read-only `content://` собственного FileProvider на Android либо защищённые private `file://` URL на iOS 18.4+.
 
 ## Проверенный flow запросов
 

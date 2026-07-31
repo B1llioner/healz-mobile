@@ -1,1 +1,2 @@
 a840b29c01a0c8055ca8b9544c6bfe766298f8d14cabf69b4f81345924e1f9fe  Healz-1.0.1-upload-fix-arm64.apk
+ddf4cb3eba2b20a561d3b617e1d4303cb02ce8cb306778045fc036a63ec10553  Healz-1.0.2-multishare-arm64.apk
