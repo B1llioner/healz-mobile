@@ -1,0 +1,409 @@
+diff --git a/node_modules/expo-sharing/plugin/build/ios/createInfoPlistFile.js b/node_modules/expo-sharing/plugin/build/ios/createInfoPlistFile.js
+index 496f06b..5092213 100644
+--- a/node_modules/expo-sharing/plugin/build/ios/createInfoPlistFile.js
++++ b/node_modules/expo-sharing/plugin/build/ios/createInfoPlistFile.js
+@@ -47,7 +47,7 @@ function createInfoPlistFile(targetDirectory, appGroupId, urlScheme, activationR
+         AppGroupId: appGroupId,
+         MainTargetUrlScheme: urlScheme,
+         CFBundleDevelopmentRegion: '$(DEVELOPMENT_LANGUAGE)',
+-        CFBundleDisplayName: '$(PRODUCT_NAME)',
++        CFBundleDisplayName: 'Healz',
+         CFBundleExecutable: '$(EXECUTABLE_NAME)',
+         CFBundleIdentifier: '$(PRODUCT_BUNDLE_IDENTIFIER)',
+         CFBundleInfoDictionaryVersion: '6.0',
+diff --git a/node_modules/expo-sharing/plugin/build/ios/withAppGroupId.js b/node_modules/expo-sharing/plugin/build/ios/withAppGroupId.js
+index fc6a2ef..6f2a16f 100644
+--- a/node_modules/expo-sharing/plugin/build/ios/withAppGroupId.js
++++ b/node_modules/expo-sharing/plugin/build/ios/withAppGroupId.js
+@@ -15,6 +15,28 @@ const withAppGroupId = (config, appGroupId) => {
+         }
+         return config;
+     });
++    // Tell Xcode Automatic Signing to register the App Group for the host
++    // target. Entitlements alone produce a free-provisioning profile without
++    // the group allowlist on a Personal Team.
++    config = (0, config_plugins_1.withXcodeProject)(config, (config) => {
++        const xcodeProject = config.modResults;
++        const projectUuid = xcodeProject.getFirstProject().uuid;
++        const targetUuid = xcodeProject.getFirstTarget().uuid;
++        const projectSection = xcodeProject.pbxProjectSection()[projectUuid];
++        projectSection.attributes ??= {};
++        projectSection.attributes.TargetAttributes ??= {};
++        const targetAttributes = projectSection.attributes.TargetAttributes[targetUuid] ??= {};
++        targetAttributes.ProvisioningStyle = 'Automatic';
++        targetAttributes.SystemCapabilities ??= {};
++        targetAttributes.SystemCapabilities['com.apple.ApplicationGroups.iOS'] = { enabled: 1 };
++        const nativeTarget = xcodeProject.pbxNativeTargetSection()[targetUuid];
++        const configurationList = xcodeProject.pbxXCConfigurationList()[nativeTarget.buildConfigurationList];
++        const configurations = xcodeProject.pbxXCBuildConfigurationSection();
++        for (const configuration of configurationList.buildConfigurations) {
++            configurations[configuration.value].buildSettings.REGISTER_APP_GROUPS = 'YES';
++        }
++        return config;
++    });
+     // Add to Info.plist
+     return (0, config_plugins_1.withInfoPlist)(config, (config) => {
+         config.modResults['ExpoShareIntoAppGroupId'] = appGroupId;
+diff --git a/node_modules/expo-sharing/plugin/build/ios/xcode/addToPbxProjectSection.js b/node_modules/expo-sharing/plugin/build/ios/xcode/addToPbxProjectSection.js
+index 324bf58..ad3b1b1 100644
+--- a/node_modules/expo-sharing/plugin/build/ios/xcode/addToPbxProjectSection.js
++++ b/node_modules/expo-sharing/plugin/build/ios/xcode/addToPbxProjectSection.js
+@@ -12,5 +12,8 @@ function addToPbxProjectSection(xcodeProject, target) {
+         LastSwiftMigration: 1250, // Adds the Swift 5.0 target migration attribute to avoid "Convert to Current Swift Syntax" warning
+         ProvisioningStyle: 'Automatic', // Uses "Automatically manage signing" by default
+         CreatedOnToolsVersion: '15.1',
++        SystemCapabilities: {
++            'com.apple.ApplicationGroups.iOS': { enabled: 1 },
++        },
+     };
+ }
+diff --git a/node_modules/expo-sharing/plugin/build/ios/xcode/addXCConfigurationList.js b/node_modules/expo-sharing/plugin/build/ios/xcode/addXCConfigurationList.js
+index 46b9776..89ab3a0 100644
+--- a/node_modules/expo-sharing/plugin/build/ios/xcode/addXCConfigurationList.js
++++ b/node_modules/expo-sharing/plugin/build/ios/xcode/addXCConfigurationList.js
+@@ -26,6 +26,7 @@ function addXCConfigurationList(xcodeProject, targetName, bundleIdentifier, depl
+         MTL_FAST_MATH: 'YES',
+         PRODUCT_BUNDLE_IDENTIFIER: `"${bundleIdentifier}"`,
+         PRODUCT_NAME: '"$(TARGET_NAME)"',
++        REGISTER_APP_GROUPS: 'YES',
+         SKIP_INSTALL: 'YES',
+         STRING_CATALOG_GENERATE_SYMBOLS: 'YES',
+         SWIFT_APPROACHABLE_CONCURRENCY: 'YES',
+diff --git a/node_modules/expo-sharing/plugin/src/ios/createInfoPlistFile.ts b/node_modules/expo-sharing/plugin/src/ios/createInfoPlistFile.ts
+index 7cd0d02..0f3afe3 100644
+--- a/node_modules/expo-sharing/plugin/src/ios/createInfoPlistFile.ts
++++ b/node_modules/expo-sharing/plugin/src/ios/createInfoPlistFile.ts
+@@ -52,7 +52,7 @@ export default function createInfoPlistFile(
+     AppGroupId: appGroupId,
+     MainTargetUrlScheme: urlScheme,
+     CFBundleDevelopmentRegion: '$(DEVELOPMENT_LANGUAGE)',
+-    CFBundleDisplayName: '$(PRODUCT_NAME)',
++    CFBundleDisplayName: 'Healz',
+     CFBundleExecutable: '$(EXECUTABLE_NAME)',
+     CFBundleIdentifier: '$(PRODUCT_BUNDLE_IDENTIFIER)',
+     CFBundleInfoDictionaryVersion: '6.0',
+diff --git a/node_modules/expo-sharing/plugin/src/ios/withAppGroupId.ts b/node_modules/expo-sharing/plugin/src/ios/withAppGroupId.ts
+index cf3334f..5f47fb4 100644
+--- a/node_modules/expo-sharing/plugin/src/ios/withAppGroupId.ts
++++ b/node_modules/expo-sharing/plugin/src/ios/withAppGroupId.ts
+@@ -1,4 +1,9 @@
+-import { ConfigPlugin, withEntitlementsPlist, withInfoPlist } from '@expo/config-plugins';
++import {
++  ConfigPlugin,
++  withEntitlementsPlist,
++  withInfoPlist,
++  withXcodeProject,
++} from '@expo/config-plugins';
+ 
+ export const withAppGroupId: ConfigPlugin<string> = (config, appGroupId) => {
+   // Add do entitlements
+@@ -19,6 +24,29 @@ export const withAppGroupId: ConfigPlugin<string> = (config, appGroupId) => {
+     return config;
+   });
+ 
++  // Entitlements alone are not enough for local Automatic Signing: mark the
++  // capability on the host target so Xcode registers it in the profile.
++  config = withXcodeProject(config, (config) => {
++    const xcodeProject = config.modResults;
++    const projectUuid = xcodeProject.getFirstProject().uuid;
++    const targetUuid = xcodeProject.getFirstTarget().uuid;
++    const projectSection = xcodeProject.pbxProjectSection()[projectUuid];
++    projectSection.attributes ??= {};
++    projectSection.attributes.TargetAttributes ??= {};
++    const targetAttributes = (projectSection.attributes.TargetAttributes[targetUuid] ??= {});
++    targetAttributes.ProvisioningStyle = 'Automatic';
++    targetAttributes.SystemCapabilities ??= {};
++    targetAttributes.SystemCapabilities['com.apple.ApplicationGroups.iOS'] = { enabled: 1 };
++    const nativeTarget = xcodeProject.pbxNativeTargetSection()[targetUuid];
++    const configurationList =
++      xcodeProject.pbxXCConfigurationList()[nativeTarget.buildConfigurationList];
++    const configurations = xcodeProject.pbxXCBuildConfigurationSection();
++    for (const configuration of configurationList.buildConfigurations) {
++      configurations[configuration.value].buildSettings.REGISTER_APP_GROUPS = 'YES';
++    }
++    return config;
++  });
++
+   // Add to Info.plist
+   return withInfoPlist(config, (config) => {
+     config.modResults['ExpoShareIntoAppGroupId'] = appGroupId;
+diff --git a/node_modules/expo-sharing/plugin/src/ios/xcode/addToPbxProjectSection.ts b/node_modules/expo-sharing/plugin/src/ios/xcode/addToPbxProjectSection.ts
+index 54a468b..9510b14 100644
+--- a/node_modules/expo-sharing/plugin/src/ios/xcode/addToPbxProjectSection.ts
++++ b/node_modules/expo-sharing/plugin/src/ios/xcode/addToPbxProjectSection.ts
+@@ -13,5 +13,8 @@ export function addToPbxProjectSection(xcodeProject: XcodeProject, target: { uui
+     LastSwiftMigration: 1250, // Adds the Swift 5.0 target migration attribute to avoid "Convert to Current Swift Syntax" warning
+     ProvisioningStyle: 'Automatic', // Uses "Automatically manage signing" by default
+     CreatedOnToolsVersion: '15.1',
++    SystemCapabilities: {
++      'com.apple.ApplicationGroups.iOS': { enabled: 1 },
++    },
+   };
+ }
+diff --git a/node_modules/expo-sharing/plugin/src/ios/xcode/addXCConfigurationList.ts b/node_modules/expo-sharing/plugin/src/ios/xcode/addXCConfigurationList.ts
+index 977ceb2..bec0178 100644
+--- a/node_modules/expo-sharing/plugin/src/ios/xcode/addXCConfigurationList.ts
++++ b/node_modules/expo-sharing/plugin/src/ios/xcode/addXCConfigurationList.ts
+@@ -32,6 +32,7 @@ export function addXCConfigurationList(
+     MTL_FAST_MATH: 'YES',
+     PRODUCT_BUNDLE_IDENTIFIER: `"${bundleIdentifier}"`,
+     PRODUCT_NAME: '"$(TARGET_NAME)"',
++    REGISTER_APP_GROUPS: 'YES',
+     SKIP_INSTALL: 'YES',
+     STRING_CATALOG_GENERATE_SYMBOLS: 'YES',
+     SWIFT_APPROACHABLE_CONCURRENCY: 'YES',
+diff --git a/node_modules/expo-sharing/plugin/template-files/ios/ShareIntoViewController.swift b/node_modules/expo-sharing/plugin/template-files/ios/ShareIntoViewController.swift
+index 7175339..e5ed814 100644
+--- a/node_modules/expo-sharing/plugin/template-files/ios/ShareIntoViewController.swift
++++ b/node_modules/expo-sharing/plugin/template-files/ios/ShareIntoViewController.swift
+@@ -5,6 +5,10 @@ import UniformTypeIdentifiers
+ import AVFoundation
+ 
+ class ShareIntoViewController: SLComposeServiceViewController {
++  private let maxSharedFileBytes: Int64 = 50 * 1024 * 1024
++  private let maxTransitFileAge: TimeInterval = 24 * 60 * 60
++  private var isHandlingShare = false
++
+   // Only the following two properties cause a hard-crash of the share extension, because the failure originates from
+   // plugin misconfiguration. Other errors should be handled in the view controller and preferrably print a message, because it
+   // is not possible for our users to handle them at runtime.
+@@ -40,8 +44,14 @@ class ShareIntoViewController: SLComposeServiceViewController {
+   // MARK: - Core Logic
+ 
+   private func handleShare() {
++    guard !isHandlingShare else {
++      return
++    }
++    isHandlingShare = true
++    cleanupExpiredAppGroupFiles()
++
+     guard let items = extensionContext?.inputItems as? [NSExtensionItem] else {
+-      self.extensionContext?.completeRequest(returningItems: nil)
++      close()
+       return
+     }
+ 
+@@ -50,12 +60,18 @@ class ShareIntoViewController: SLComposeServiceViewController {
+         return await self.processInputItems(items)
+       }.value
+ 
+-      if !payload.isEmpty {
+-        saveToUserDefaults(payload)
+-        openParentApp()
+-      } else {
+-        self.extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
++      guard !payload.isEmpty else {
++        close()
++        return
+       }
++
++      guard saveToUserDefaults(payload) else {
++        cleanupPayloadFiles(payload)
++        close()
++        return
++      }
++
++      openParentApp()
+     }
+   }
+ 
+@@ -75,17 +91,23 @@ class ShareIntoViewController: SLComposeServiceViewController {
+     return results
+   }
+ 
+-  private func saveToUserDefaults(_ payload: [SharePayload]) {
++  private func saveToUserDefaults(_ payload: [SharePayload]) -> Bool {
+     guard let userDefaults = UserDefaults(suiteName: appGroupId) else {
+-      print("Error: Expo-sharing could not initialize UserDefaults with group: \(appGroupId)")
+-      return
++      print("Error: Expo-sharing could not initialize shared storage")
++      return false
+     }
+ 
+-    if let encoded = try? JSONEncoder().encode(payload) {
++    do {
++      let encoded = try JSONEncoder().encode(payload)
+       userDefaults.set(encoded, forKey: SHARE_INTO_DEFAULTS_KEY)
+-      userDefaults.synchronize()
+-    } else {
++      guard userDefaults.synchronize() else {
++        print("Error: Expo-sharing could not persist shared data")
++        return false
++      }
++      return true
++    } catch {
+       print("Error: Expo-sharing has failed to serialize shared data to JSON")
++      return false
+     }
+   }
+ 
+@@ -201,30 +223,47 @@ class ShareIntoViewController: SLComposeServiceViewController {
+   // MARK: - File Management
+ 
+   private func copyAndProcessFile(url: URL, type: ShareType) -> SharePayload? {
++    guard let sourceSize = fileSize(at: url), sourceSize <= maxSharedFileBytes else {
++      print("Error: Expo-sharing rejected a shared file because its size is unavailable or too large")
++      return nil
++    }
++
+     guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else {
+       return nil
+     }
+ 
+-    let fileName = url.lastPathComponent.isEmpty ? UUID().uuidString : url.lastPathComponent
+-    let destinationURL = containerURL.appendingPathComponent(fileName)
++    let originalName = url.lastPathComponent.isEmpty ? "document" : url.lastPathComponent
++    let fileExtension = url.pathExtension
++    let storedName = UUID().uuidString + (fileExtension.isEmpty ? "" : ".\(fileExtension)")
++    let destinationURL = containerURL.appendingPathComponent(storedName)
+ 
+     do {
+-      if FileManager.default.fileExists(atPath: destinationURL.path) {
+-        try FileManager.default.removeItem(at: destinationURL)
+-      }
+       try FileManager.default.copyItem(at: url, to: destinationURL)
++      // copyItem preserves the source modification date. Mark the transit copy
++      // with its actual arrival time so the 24-hour orphan reaper cannot treat
++      // a newly shared but historically old medical document as stale.
++      try FileManager.default.setAttributes(
++        [.modificationDate: Date()],
++        ofItemAtPath: destinationURL.path
++      )
+     } catch {
+-      print("Error copying file: \(error)")
++      print("Error: Expo-sharing failed to copy a shared file")
++      try? FileManager.default.removeItem(at: destinationURL)
++      return nil
++    }
++
++    guard let copiedSize = fileSize(at: destinationURL), copiedSize <= maxSharedFileBytes else {
++      try? FileManager.default.removeItem(at: destinationURL)
++      print("Error: Expo-sharing rejected a copied file because its size is unavailable or too large")
+       return nil
+     }
+ 
+-    let size = try? FileManager.default.attributesOfItem(atPath: destinationURL.path)[.size] as? Int
+     let fileExt = destinationURL.pathExtension
+     let mimeType = UTType(filenameExtension: fileExt)?.preferredMIMEType ?? "application/octet-stream"
+ 
+     let metadata = ShareMetadata(
+-      originalName: fileName,
+-      size: size
++      originalName: originalName,
++      size: Int(exactly: copiedSize) ?? Int(exactly: sourceSize)
+     )
+ 
+     return SharePayload(
+@@ -236,6 +275,11 @@ class ShareIntoViewController: SLComposeServiceViewController {
+   }
+ 
+   private func saveDataToAppGroup(data: Data, fileName: String, type: ShareType, mimeType: String?) -> SharePayload? {
++    guard Int64(data.count) <= maxSharedFileBytes else {
++      print("Error: Expo-sharing rejected shared data because it is too large")
++      return nil
++    }
++
+     guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else {
+       return nil
+     }
+@@ -244,6 +288,7 @@ class ShareIntoViewController: SLComposeServiceViewController {
+     do {
+       try data.write(to: destinationURL)
+     } catch {
++      print("Error: Expo-sharing failed to write shared data")
+       return nil
+     }
+ 
+@@ -255,6 +300,92 @@ class ShareIntoViewController: SLComposeServiceViewController {
+     )
+   }
+ 
++  private func fileSize(at url: URL) -> Int64? {
++    guard
++      let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
++      let size = attributes[.size] as? NSNumber
++    else {
++      return nil
++    }
++    return size.int64Value
++  }
++
++  private func cleanupPayloadFiles(_ payload: [SharePayload]) {
++    guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else {
++      return
++    }
++    let canonicalContainer = containerURL.standardizedFileURL.resolvingSymlinksInPath()
++    let containerPrefix = canonicalContainer.path.hasSuffix("/")
++      ? canonicalContainer.path
++      : canonicalContainer.path + "/"
++
++    for item in payload {
++      switch item.type {
++      case .file, .image, .audio, .video:
++        break
++      case .text, .url:
++        continue
++      }
++
++      guard let rawURL = URL(string: item.value), rawURL.isFileURL else {
++        continue
++      }
++      let values = try? rawURL.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
++      guard values?.isSymbolicLink != true, values?.isRegularFile == true else {
++        continue
++      }
++      let canonicalFile = rawURL.standardizedFileURL.resolvingSymlinksInPath()
++      guard canonicalFile.path.hasPrefix(containerPrefix) else {
++        continue
++      }
++      try? FileManager.default.removeItem(at: canonicalFile)
++    }
++  }
++
++  private func cleanupExpiredAppGroupFiles() {
++    guard let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupId) else {
++      return
++    }
++    let canonicalContainer = containerURL.standardizedFileURL.resolvingSymlinksInPath()
++    let containerPrefix = canonicalContainer.path.hasSuffix("/")
++      ? canonicalContainer.path
++      : canonicalContainer.path + "/"
++    let keys: Set<URLResourceKey> = [
++      .isRegularFileKey,
++      .isSymbolicLinkKey,
++      .contentModificationDateKey,
++    ]
++    guard let contents = try? FileManager.default.contentsOfDirectory(
++      at: canonicalContainer,
++      includingPropertiesForKeys: Array(keys),
++      options: [.skipsHiddenFiles]
++    ) else {
++      return
++    }
++
++    let now = Date()
++    for rawFile in contents {
++      let stem = rawFile.deletingPathExtension().lastPathComponent
++      guard UUID(uuidString: stem) != nil else {
++        continue
++      }
++      let values = try? rawFile.resourceValues(forKeys: keys)
++      guard
++        values?.isRegularFile == true,
++        values?.isSymbolicLink != true,
++        let modified = values?.contentModificationDate,
++        now.timeIntervalSince(modified) > maxTransitFileAge
++      else {
++        continue
++      }
++      let canonicalFile = rawFile.standardizedFileURL.resolvingSymlinksInPath()
++      guard canonicalFile.path.hasPrefix(containerPrefix) else {
++        continue
++      }
++      try? FileManager.default.removeItem(at: canonicalFile)
++    }
++  }
++
+   // MARK: - Open main app
+ 
+   @MainActor

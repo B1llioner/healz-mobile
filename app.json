@@ -2,19 +2,24 @@
   "expo": {
     "name": "Healz",
     "slug": "healz-mobile",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "scheme": "healz",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/healz-icon.png",
     "userInterfaceStyle": "light",
     "backgroundColor": "#FDF8F6",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "ai.healz.mobile"
+      "bundleIdentifier": "ai.healz.mobile",
+      "buildNumber": "3",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Healz использует камеру только когда вы снимаете медицинский документ для загрузки.",
+        "NSPhotoLibraryUsageDescription": "Healz открывает выбранные вами медицинские документы и изображения для загрузки в чат."
+      }
     },
     "android": {
       "package": "ai.healz.mobile",
-      "versionCode": 1,
+      "versionCode": 3,
       "allowBackup": false,
       "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",
@@ -34,6 +39,15 @@
       [
         "expo-sharing",
         {
+          "ios": {
+            "enabled": true,
+            "extensionBundleIdentifier": "ai.healz.mobile.ShareExtension",
+            "appGroupId": "group.ai.healz.mobile",
+            "activationRule": {
+              "supportsImageWithMaxCount": 10,
+              "supportsFileWithMaxCount": 10
+            }
+          },
           "android": {
             "enabled": true,
             "singleShareMimeTypes": [
@@ -62,6 +76,9 @@
       [
         "expo-build-properties",
         {
+          "ios": {
+            "deploymentTarget": "18.4"
+          },
           "android": {
             "buildArchs": [
               "arm64-v8a"

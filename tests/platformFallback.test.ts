@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import fallbackBridge from '../modules/healz-upload-bridge/src/HealzUploadBridgeModule';
 
-test('non-Android lifecycle methods are safe no-ops for the shared WebView shell', async () => {
+test('fallback bridge lifecycle methods are safe no-ops for unsupported platforms', async () => {
   await fallbackBridge.cleanupExpired();
   await fallbackBridge.clearStage();
   await fallbackBridge.discardFiles(['ignored']);
@@ -13,7 +13,7 @@ test('non-Android lifecycle methods are safe no-ops for the shared WebView shell
   });
 });
 
-test('non-Android share mutations fail explicitly instead of pretending to upload', async () => {
+test('fallback bridge share mutations fail explicitly instead of pretending to upload', async () => {
   await assert.rejects(
     fallbackBridge.importSharedFiles([]),
     /Incoming document sharing is not available on this platform yet/,

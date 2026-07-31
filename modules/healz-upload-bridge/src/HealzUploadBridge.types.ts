@@ -1,6 +1,7 @@
 export type SharedFileInput = {
   uri: string;
   mimeType: string;
+  displayName?: string | null;
 };
 
 export type ImportedFile = {

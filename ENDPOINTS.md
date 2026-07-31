@@ -1,7 +1,7 @@
 # Healz Web — наблюдавшиеся маршруты и endpoints
 
 Дата исследования: 29 июля 2026
-Среда: публичный `https://app.healz.ai`, мобильный Chromium/Playwright.
+Среда: текущий публичный `https://app.healz.ai`; авторизованный flow ранее проверен в мобильном Chromium/Playwright, актуальная реализация composer повторно сверена по live chunk `1137-99fb558b172124ac.js`.
 Статус документа: описание фактически наблюдавшегося поведения, а не официальный API-контракт Healz.
 
 ## Принципы интеграции
@@ -32,9 +32,16 @@
 
 - без действующей сессии отвечает редиректом `307` на `/`;
 - с действующей сессией открывает чат;
-- содержит скрытый стандартный input примерно следующего назначения: `type="file"`, `accept="application/pdf,image/*"`, `multiple`;
+- текущий composer рендерит скрытый стандартный input: `type="file"`, `accept="application/pdf,image/*"`, `multiple`;
+- обработчик скрепки останавливает исходное событие и через 400 мс меняет `accept` того же input на `*/*`, удаляет `capture`, затем вызывает `click()`;
 - выбор файла запускает загрузку документа, после чего карточка файла появляется в composer;
 - сама отправка сообщения остается отдельным действием пользователя.
+
+Обе chooser-сигнатуры важны для native handoff. Android callback в зависимости от момента получает исходные `application/pdf,image/*` либо установленный обработчиком `*/*`; iOS arm-message также принимает только эти две наблюдавшиеся формы. Mobile patch дополнительно требует `multiple`, exact origin/chat path и explicit MIME allowlist PDF/JPEG/PNG/WebP/HEIC; Android отклоняет capture, iOS — directory selection и не-main-frame вызовы.
+
+На iOS 18.4+ document-start shim переносит `input.click()` в синхронный стек исходного trusted tap и перед ним отправляет native handler сообщение `HealzUploadChooser` с path/multiple/accept. Shim активируется только на exact origin и `/app/chat[/…]`, проверяет точную наблюдавшуюся DOM-структуру composer, не меняет prototype и на 700 мс подавляет лишь отложенный повтор того же input.
+
+Native handler при наличии valid stage одноразово вооружает chooser на 1.5 секунды. Patched `WKUIDelegate` затем проверяет main frame, тот же chat path, `multiple`, запрет directories, TTL, MIME/размеры и принадлежность каждого `file://` URL private `Application Support/healz-pending`, после чего передаёт staged batch HTML input и помечает nonce consumed. Когда stage отсутствует, optional open-panel callback не объявляется и остаётся штатный picker `WKWebView`. Если stage есть, но chooser не прошёл arm/main-frame/path guards, staged медицинские URL не выдаются и неожиданный chooser завершается fail-closed; это намеренно отличается от обычного fallback.
 
 ## Авторизация
 
@@ -94,11 +101,13 @@
 - `__Secure-better-auth.session_data` — `HttpOnly`, `Secure`, `SameSite=Lax`, более короткий кэш данных сессии;
 - `hlz_signed_up` — признак завершенного signup-flow.
 
-Значения cookies не читаются JavaScript-мостом и не копируются в нативное хранилище. WebView работает не в incognito-режиме и сохраняет их штатным Android CookieManager.
+Значения cookies не читаются JavaScript-мостом и не копируются в нативное хранилище. WebView работает не в incognito-режиме и сохраняет их штатным persistent cookie storage платформы.
 
 Проверенный результат: холодный перезапуск браузерного профиля с тем же хранилищем открыл `/app/chat` без повторного OTP.
 
 ## Загрузка документов
+
+В текущем публичном bundle server config содержит `documents.maxFileSize: 0x1400000`, то есть 20 МиБ на один загружаемый файл. Этот upload-предел продублирован в TypeScript, Kotlin, Swift и platform WebView guardrails мобильного приложения. Локальный importer принимает исходник до 50 МиБ, чтобы изображение можно было уменьшить до серверного лимита; staging всё равно отклоняет выбранный результат больше 20 МиБ. Очередь дополнительно ограничена 100 МиБ и 10 файлами.
 
 ### `POST /api/documents`
 
@@ -112,7 +121,7 @@
 - после ответа карточка документа появилась в composer;
 - сообщение в чат автоматически не отправилось.
 
-Названия multipart-полей и структура ответа намеренно не закрепляются в мобильном приложении: ими владеет текущая версия сайта. Нативный мост возвращает WebView только один или несколько локальных `content://` URI через стандартный file chooser callback.
+Названия multipart-полей и структура ответа намеренно не закрепляются в мобильном приложении: ими владеет текущая версия сайта. Нативный мост возвращает WebView один или несколько локальных URL через стандартный file chooser callback: read-only `content://` собственного FileProvider на Android либо защищённые private `file://` URL на iOS 18.4+.
 
 ## Проверенный flow запросов
 
@@ -125,10 +134,11 @@ GET /app/chat
        ├─ POST /api/auth/sign-in/email-otp
        └─ GET /api/auth/get-session
             └─ GET /app/chat
-                 └─ выбор файла в <input multiple>
-                      └─ POST /api/documents (multipart/form-data)
-                           └─ карточка файла в composer
-                                └─ ручная отправка пользователем
+                 └─ скрепка: accept application/pdf,image/* → */* через 400 мс
+                      └─ выбор файла в <input multiple>
+                           └─ POST /api/documents (multipart/form-data)
+                                └─ карточка файла в composer
+                                     └─ ручная отправка пользователем
 ```
 
 ## Внешние запросы
@@ -144,9 +154,9 @@ GET /app/chat
 
 ## Что требует повторной проверки при изменении сайта
 
-- наличие стандартного file input и атрибута `multiple`;
+- наличие стандартного file input, атрибута `multiple` и двух наблюдавшихся accept-сигнатур;
 - редирект неавторизованного `/app/chat`;
 - появление файла в composer до ручной отправки;
-- cookie persistence после обновления WebView/Android;
-- выбор кейса и чата через публичную навигацию;
+- cookie persistence после обновления платформенного WebView;
+- server config `documents.maxFileSize` и batch-поведение;
 - фактические серверные ограничения по размеру и числу файлов.
